@@ -1,0 +1,432 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+
+<head>
+    <link rel="stylesheet" href="/messages.css">
+    <meta charset="UTF-8"/>
+    <title>Messages</title>
+    <script src="https://code.jquery.com/jquery-3.3.1.min.js"
+            integrity="sha256-FgpCb/KJQlLNfOu91ta32o/NMZxltwRo8QtmkMRdAu8="
+            crossorigin="anonymous"></script>
+    <script src="/stomp.min.js"></script>
+    <script src="/sockjs.min.js"></script>
+
+    <div id="menu" style="position: fixed; top: 10px; right: 10px;">
+        <div id="setting">Setting</div>
+        <div id="drop">
+            <a href="/logout">Logout</a>
+            <input hidden type="file" id="imageFile" onchange="sendImage()"/>
+            <div id="sendImage" onclick="$('#imageFile').click()">Upload image</div>
+
+
+        </div>
+    </div>
+
+    <script th:inline="text">
+        var stompClient = null;
+        var currentUserId = [[${user.getId()}]];
+
+        function sendImage() {
+
+            var data = new FormData();
+            data.append('file', $('#imageFile').get(0).files[0]);
+            jQuery.ajax({
+                url: '/image',
+                data: data,
+                cache: false,
+                mimeType: "multipart/form-data",
+                contentType: false,
+                processData: false,
+                method: 'POST',
+                type: 'POST',
+                dataType: 'json',
+                beforeSend: function () {
+                    $('#sendImage').text('UPLOAD..');
+                },
+                success: function (data) {
+                    if (data.success == 1) $('#sendImage').text('OK!');
+                    else $('#sendImage').text('RETRY PLEASE');
+
+                    setTimeout(function () {
+                        $('#sendImage').text('Upload image');
+                    }, 2000);
+                }
+
+            });
+        }
+
+
+        function setPreVisText(chatId, text, userId) {
+            $(".userMessageInfo[data-chatId='" + chatId + "']").children('.data').attr('data-lastSender', userId);
+            var $1 = $(".userMessageInfo[data-chatId=" + chatId + "]");
+            if ($('#chat').attr('data-chatId') == chatId) {
+                $1.children(".lastTextUnread").attr('class', 'lastText');
+                $1.children(".lastText").text(text);
+                $1.children(".unreadCount").hide();
+                $1.children(".unreadCount").text(0);
+            } else {
+                $1.children(".lastText").attr('class', 'lastTextUnread');
+                $1.children(".lastTextUnread").text(text);
+                $1.children(".lastTextUnread").attr('data-sender', userId);
+                var c = $1.children(".unreadCount").text();
+                $1.children(".unreadCount").text(Number(c) + 1);
+                $1.children(".unreadCount").show();
+            }
+            if (userId == currentUserId) {
+                $1.children(".lastText").attr('class', 'lastTextUnread');
+            }
+
+
+        }
+
+        function getChat(chatId) {
+            $("#chat").empty();
+            $("#chat").show();
+            $("#sender").show();
+
+            $('#chat').attr('data-chatId', chatId)
+
+            $.ajax({
+                url: "readMessages",
+                type: "POST",
+                data: {chatId: chatId},
+                dataType: "json",
+                success: function (data) {
+                    var messages = data.messages;
+                    for (var i = 0; i < messages.length; i++) {
+                        var id = messages[i].id;
+                        var text = messages[i].text;
+                        var user = messages[i].user;
+                        var reads = messages[i].isReads;
+                        var time = messages[i].unixTime;
+                        var cl;
+                        if (reads) {
+                            console.log('reads true: ' + reads)
+                            cl = 'message';
+                        } else {
+                            console.log('reads false: ' + reads)
+                            cl = 'messageUnread';
+                        }
+
+                        $("#chat").attr('data-chatId', chatId);
+                        $("#chat").prepend("<div class='" + cl + "' data-id='" + id + "' data-userId='" + user.id + "'><img class='image' src='getImage/" + user.login + '.jpg\'' + "'><div class='messageLogin'>" + user.login + "</div><div class='messageTime'>" + timeToString(time) + "</div><div class='messageText'>" + text + "</div></div>");
+                    }
+                    scrollDown();
+
+                }
+
+            });
+            //setAsReadMessage(chatId);
+            markAsRead(Number(chatId), true);
+
+        }
+
+        function addChat(userId, login) {
+            $.ajax({
+                url: "createChat",
+                data: {login: login},
+                dataType: "json",
+                type: "POST",
+                success: function (data) {
+                    var chatId = data.chat.id;
+                    if (data.error === 2) {
+                        getChat(chatId);
+                    }
+                    if (data.success === 1) {
+                        $("#chats").append("<div class='userMessageInfo' onclick='getChat(" + chatId + ")' data-canWrite='" + data.chat.canWrite + "' data-chatId='" + chatId + "'hidden>\n" +
+                            "<img class='image' src='/getImage/" + login + ".jpg'/>\n" +
+                            "<div class='nameText'>" + login + "</div>\n" +
+                            "<div class='lastText'></div>\n</div>");
+                        getChat(chatId);
+                    }
+                }
+            });
+        }
+
+        $(function () {
+            $('#setting').click(function () {
+                $('#drop').slideToggle(177);
+            })
+        });
+
+        $(function () {
+
+            var synch = {chatId: 0, mid: 0};
+            $("#chat").scroll(function () {
+                if ($(this).scrollTop() <= 300) {
+                    var mId = $(this).children(":first-child").attr("data-id");
+
+                    if (synch.chatId !== $('#chat').attr('data-chatId') || synch.mid !== mId) {
+                        synch.chatId = $('#chat').attr('data-chatId');
+                        synch.mid = mId;
+                        $.ajax({
+                            url: "readMessages",
+                            type: "POST",
+                            data: {chatId: $('#chat').attr('data-chatId'), mid: mId},
+                            dataType: "json",
+                            success: function (data) {
+                                var messages = data.messages;
+                                for (var i = 0; i < messages.length; i++) {
+                                    var id = messages[i].id;
+                                    var text = messages[i].text;
+                                    var time = messages[i].unixTime;
+                                    //var chatPrivateId = messages[i].chatId;
+                                    var user = messages[i].user;
+                                    if (messages[i].isReads)
+                                        $("#chat").prepend("<div class='message' data-id='" + id + "' data-userId='" + user.id + "'><img class='image' src='getImage/" + user.login + '.jpg\'' + "'><div class='messageLogin'>" + user.login + "</div><div class='messageTime'>" + timeToString(time) + "</div><div class='messageText'>" + text + "</div></div>");
+                                    else
+                                        $("#chat").prepend("<div class='messageUnread' data-id='" + id + "' data-userId='" + user.id + "'><img class='image' src='getImage/" + user.login + '.jpg\'' + "'><div class='messageLogin'>" + user.login + "</div><div class='messageTime'>" + timeToString(time) + "</div><div class='messageText'>" + text + "</div></div>");
+
+                                }
+                            }
+
+                        });
+                    }
+
+
+                }
+
+            });
+
+
+            $(".userMessageInfo").click(function () {
+                getChat($(this).attr("data-chatId"));
+            });
+
+            connect();
+
+            $(document).keyup(function (event) {
+                if (event.keyCode === 27) {
+                    $('#chat').attr('data-chatId', 0);
+                    $("#chat").hide();
+                    $("#sender").hide();
+                }
+            });
+
+            $("#sender").keyup(function (event) {
+                if (event.keyCode === 13) {
+                    $("#send").click();
+                }
+            });
+
+
+            $("#send").click(function () {
+                var mess = $("#textMess");
+                var val = mess.val();
+                if (val.trim() !== "") {
+                    scrollDown();
+                    sendMessage(val.trim(), $('#chat').attr('data-chatId'));
+                    mess.val("");
+                }
+            });
+            $("#inputUsername").keyup(function () {
+                var val = $("#inputUsername").val();
+                if (val === "") {
+                    $(".userMessageInfoSearch").hide();
+                    $(".userMessageInfo").show();
+                    $(".textUsersNonFound").hide();
+
+                } else {
+                    $.ajax({
+                        url: "search",
+                        data: {login: val},
+                        type: "POST",
+                        dataType: "json",
+                        beforeSend: function () {
+                            $(".userMessageInfo").hide();
+                            $(".userMessageInfoSearch").remove();
+                            $(".userMessageInfoSearch").show();
+                            $(".textUsersNonFound").hide();
+                        },
+                        success: function (data) {
+                            var users = data.users;
+                            var length = users.length;
+                            if (length === 0) {
+                                $("#addChat").after("<div class='textUsersNonFound'>Users non found</div>");
+                            } else {
+                                for (var i = 0; i < length; i++) {
+                                    var id = users[i].id;
+                                    var login = users[i].login;
+
+                                    $("#addChat").append("<div class='userMessageInfoSearch' onclick=\"addChat(" + id + '\,' + '\'' + login + '\'' + ")\">" +
+                                        "<img class='image' src='/getImage/" + login + ".jpg'/>\n" +
+                                        "<div class='nameText'>" + login + "</div>\n" +
+                                        "</div>");
+                                }
+                            }
+                        }
+                    })
+                }
+            })
+        });
+
+        function connect() {
+            var socket = new SockJS('/webSocket');
+            stompClient = Stomp.over(socket);
+            stompClient.connect({}, function (frame) {
+                console.log('Connected: ' + frame);
+                stompClient.subscribe('/user/queue/reply', function (data) {
+                    addMessage(data.body);
+                });
+                stompClient.subscribe('/user/queue/readMessage', function (data) {
+                    console.log('setAsRead. chat #' + JSON.parse(data.body).chatId);
+                    markAsRead(JSON.parse(data.body).chatId, false);
+                });
+
+            });
+        }
+
+        function addMessage(data) {
+            data = JSON.parse(data);
+            //var time = data.time;
+            var messages = data.messages;
+            var error = data.error;
+            for (var i = 0; i < messages.length; i++) {
+                var id = messages[i].id;
+                var text = messages[i].text;
+                var time = messages[i].unixTime;
+                var chatId = messages[i].chatId;
+                var user = messages[i].user;
+                setPreVisText(chatId, text, user.id);
+                if ($('#chat').attr('data-chatId') == chatId) {
+                    $("#chat").append("<div class='messageUnread' data-id='" + id + "' data-userId='" + user.id + "'><img class='image' src='getImage/" + user.login + ".jpg'" + "/><div class='messageLogin'>" + user.login + "</div><div class='messageTime'>" + timeToString(time) + "</div><div class='messageText'>" + text + "</div></div>");
+                    setAsReadMessage(chatId);
+                    scrollDown();
+                } else {
+                    var selectorUnreadCount = $(".userMessageInfo[data-chatId='" + chatId + "']").children(".unreadCount");
+                    $(".userMessageInfo[data-chatId='" + chatId + "']").children(".lastText").attr('class', 'lastTextUnread');
+                    $(".userMessageInfo[data-chatId='" + chatId + "']").children(".lastTextUnread").attr('data-userId', user.id);
+                    var val = selectorUnreadCount.text();
+                    selectorUnreadCount.text(Number(val) + 1);
+                    selectorUnreadCount.show();
+                }
+            }
+        }
+
+        function sendMessage(text, chat) {
+            stompClient.send("/app/message", {}, JSON.stringify({chatId: chat, text: text}));
+        }
+
+        function setAsReadMessage(chat) {
+            stompClient.send("/app/read", {}, JSON.stringify({chatId: chat}));
+        }
+
+        function markAsRead(chatId, thisUser) {
+            console.log('open mark as read. chatId= ' + chatId);
+            var selectorUnreadCount = $(".userMessageInfo[data-chatId='" + chatId + "']").children(".unreadCount");
+            selectorUnreadCount.hide();
+            selectorUnreadCount.text(0);
+
+
+            if (!thisUser) {
+                console.log("!this user")
+                if ($(".userMessageInfo[data-chatId='" + chatId + "']").children('.data').attr('data-lastSender') == currentUserId) {
+                    console.log('!this user, data-userId == current user');
+                    $(".userMessageInfo[data-chatId='" + chatId + "']").children('.lastTextUnread').attr('class', 'lastText');
+                    if ($("#chat").attr('data-chatId') == chatId) {
+                        console.log('chat == chatId');
+                        $("#chat").children('.messageUnread').attr('class', 'message');
+                    }
+                }
+
+
+            }
+            if (thisUser) {
+                console.log('this user true');
+                if ($(".userMessageInfo[data-chatId='" + chatId + "']").children('.data').attr('data-lastSender') != currentUserId) {
+                    console.log('this user, data-userId != current user. data-userId= ' + $(".userMessageInfo[data-chatId='" + chatId + "']").children('.data').attr('data-lastSender') + '; current: ' + currentUserId);
+                    $(".userMessageInfo[data-chatId='" + chatId + "']").children('.lastTextUnread').attr('class', 'lastText');
+                    if ($("#chat").attr('data-chatId') == chatId) {
+                        console.log('chat == chatId');
+                        $("#chat").children('.messageUnread').attr('class', 'message');
+                    }
+                }
+            }
+
+        }
+
+        function scrollDown() {
+            document.getElementById('chat').scrollTop = 0x7fffffffffffffff;
+        }
+
+        function timeToString(time) {
+            var date = new Date(time);
+            var today = new Date();
+            var $h = (date.getHours() < 10 ? '0' + date.getHours() : date.getHours());
+            var $m = (date.getMinutes() < 10 ? '0' + date.getMinutes() : date.getMinutes());
+            if (today.getDate() === date.getDate() && date.getMonth() === today.getMonth() && date.getFullYear() === today.getFullYear()) {
+                // time == today. return time only
+                return $h + ':' + $m;
+            } else {
+                var $d = date.getDate();
+                $d = $d < 10 ? '0' + $d : $d;
+                var $mh = date.getMonth()
+                $mh = $mh < 10 ? '0' + $mh : $mh;
+                var $y = date.getFullYear();
+                return $d + '.' + $mh + '.' + $y + ' ' + $h + ':' + $m;
+            }
+
+        }
+    </script>
+
+</head>
+<body>
+
+<div style="align-items: center;" id="footer">
+
+
+    <div id="chats">
+        <div class="addChat" id="addChat">
+            <input type="text" id="inputUsername" style="height: 100%; width: 100%"
+                   placeholder="Turn username or chat"/>
+        </div>
+        <div class="userMessageInfo" th:each="chat:${chatDTO}"
+             th:attr="data-canWrite=${chat.getCanWrite()},data-chatId=${chat.getId()}"
+             th:with="lastMs=${messageService.getLastMessageByChatID(chat.getId())}">
+
+            <img class="image" th:each="user:${chat.getUserModelList()}"
+                 th:src="'/getImage/'+${user.getLogin()}+'.jpg'"/>
+            <div class="nameText" th:each="user:${chat.getUserModelList()}" th:text="${user.getLogin()}"></div>
+
+            <th:block th:if="${lastMs==null}">
+                <div class="lastText"></div>
+                <div class="unreadCount" hidden></div>
+                <div class="data" hidden data-lastSender="0"></div>
+            </th:block>
+            <th:block th:if="${lastMs!=null}">
+                <div class="data" hidden th:attr="data-lastSender=${lastMs.getUserModelCreated().getId()}"></div>
+                <th:block th:with="mDTO=${lastMs.toDTO(user)}"
+                          th:if="${lastMs.toDTO(user).getUser().equals(user.toDTO())}">
+                    <div class="lastText" th:if="${mDTO.getIsReads()}" th:text="${lastMs.getText()}"></div>
+                    <div class="lastTextUnread" th:if="${!mDTO.getIsReads()}" th:text="${lastMs.getText()}"
+                         th:attr="data-sender=${lastMs.getUserModelCreated().getId()}"></div>
+                    <div class="unreadCount" hidden></div>
+                    <div hidden>true</div>
+                </th:block>
+
+                <th:block th:with="mDTO=${lastMs.toDTO(user)}"
+                          th:if="${!lastMs.toDTO(user).getUser().equals(user.toDTO())}">
+                    <div class="lastTextUnread" th:if="${!mDTO.getIsRead()}" th:text="${lastMs.getText()}"
+                         th:attr="data-sender=${lastMs.getUserModelCreated().getId()}"></div>
+                    <div class="lastText" th:if="${mDTO.getIsRead()}" th:text="${lastMs.getText()}"></div>
+                    <div class="unreadCount" th:text="${chat.getUnreadCount()}"
+                         th:if="${chat.getUnreadCount()>0}"></div>
+                    <div class="unreadCount" hidden th:if="${chat.getUnreadCount()==0}"></div>
+                    <div hidden>false</div>
+                </th:block>
+
+            </th:block>
+
+        </div>
+    </div>
+
+    <div id="chat" hidden></div>
+    <div id="sender" hidden>
+        <textarea placeholder="Turn message" id="textMess" maxlength="2000"></textarea>
+        <button id="send" class="btn">Send</button>
+    </div>
+
+</div>
+
+</body>
+</html>
